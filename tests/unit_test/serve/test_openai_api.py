@@ -20,7 +20,7 @@ from sglang_omni.admission import QueueFullError
 from sglang_omni.client import Client, ClientError, GenerateChunk
 from sglang_omni.client.audio import encode_pcm
 from sglang_omni.client.client import StreamedStopTrimmer, extract_inputs
-from sglang_omni.client.types import GenerateRequest, UsageInfo
+from sglang_omni.client.types import CompletionResult, GenerateRequest, UsageInfo
 from sglang_omni.pipeline.coordinator import Coordinator
 from sglang_omni.proto import CompleteMessage, OmniRequest, StreamMessage
 from sglang_omni.serve import create_app
@@ -3941,6 +3941,114 @@ def test_transcription_verbose_json_returns_diarized_segments() -> None:
         (0, 0.0, 1.2, "[S01]hello there."),
         (1, 1.3, 3.0, "[S02]bye."),
     ]
+
+
+@pytest.mark.parametrize("speaker_tag", ["", "[S02]"])
+def test_transcription_diarized_json_returns_speaker_segments(speaker_tag: str) -> None:
+    """The new format must return clean speech, speaker fields, timestamps, and usage."""
+
+    class MonologueTranscriptionClient(SuccessfulTranscriptionClient):
+        async def completion(
+            self,
+            request: GenerateRequest,
+            *,
+            request_id: str,
+            audio_format: str = "wav",
+        ) -> CompletionResult:
+            self.requests.append(request)
+            return CompletionResult(
+                request_id=request_id,
+                text=f"[0.10]{speaker_tag}xin chào[0.40][0.50]{speaker_tag}chào bạn[0.90]",
+            )
+
+    transcription_client = MonologueTranscriptionClient()
+    client = TestClient(
+        create_app(
+            transcription_client,
+            model_name="moss-transcribe-diarize",
+            architectures=["MossTranscribeDiarizeForConditionalGeneration"],
+        )
+    )
+    response = client.post(
+        "/v1/audio/transcriptions",
+        data={"response_format": "diarized_json"},
+        files={"file": ("sample.wav", wav_upload(1.0), "audio/wav")},
+    )
+    assert response.status_code == 200
+    speaker = "S02" if speaker_tag else "S01"
+    assert response.json() == {
+        "task": "transcribe",
+        "duration": 1.0,
+        "text": "xin chào chào bạn",
+        "segments": [
+            {
+                "type": "transcript.text.segment",
+                "id": "0",
+                "start": 0.1,
+                "end": 0.4,
+                "speaker": speaker,
+                "text": "xin chào",
+            },
+            {
+                "type": "transcript.text.segment",
+                "id": "1",
+                "start": 0.5,
+                "end": 0.9,
+                "speaker": speaker,
+                "text": "chào bạn",
+            },
+        ],
+        "usage": {"type": "duration", "seconds": 1},
+    }
+    assert len(transcription_client.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "architectures, stream, expected_error",
+    [
+        (["WhisperForConditionalGeneration"], False, "requires speaker diarization"),
+        (
+            ["MossTranscribeDiarizeForConditionalGeneration"],
+            True,
+            "stream=true supports only",
+        ),
+    ],
+)
+def test_transcription_diarized_json_rejects_unsupported_requests(
+    architectures: list[str],
+    stream: bool,
+    expected_error: str,
+) -> None:
+    """Unsupported models and diarized streams must fail before inference."""
+    transcription_client = SuccessfulTranscriptionClient()
+    client = TestClient(
+        create_app(transcription_client, model_name="asr", architectures=architectures)
+    )
+    response = client.post(
+        "/v1/audio/transcriptions",
+        data={"response_format": "diarized_json", "stream": str(stream).lower()},
+        files={"file": ("sample.wav", b"RIFF", "audio/wav")},
+    )
+    assert response.status_code == 400
+    assert expected_error in response.json()["detail"]
+    assert transcription_client.requests == []
+
+
+def test_transcription_diarized_json_rejects_chunked_audio() -> None:
+    """Independent chunk speaker labels must not be presented as global identities."""
+    transcription_client = ChunkRecordingTranscriptionClient()
+    client = chunking_test_client(
+        transcription_client,
+        architectures=["MossTranscribeDiarizeForConditionalGeneration"],
+    )
+    response = client.post(
+        "/v1/audio/transcriptions",
+        data={"response_format": "diarized_json"},
+        files={"file": ("long.wav", wav_upload(2.5), "audio/wav")},
+    )
+    assert response.status_code == 400
+    assert "speaker identities are not reconciled" in response.json()["detail"]
+    assert transcription_client.requests == []
 
 
 def test_transcription_srt_returns_diarized_segments() -> None:

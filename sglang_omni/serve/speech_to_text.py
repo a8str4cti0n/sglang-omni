@@ -449,6 +449,22 @@ def assemble_speech_to_text_response(
     usage = (
         TranscriptionUsage(seconds=math.ceil(duration_s)) if duration_s > 0 else None
     )
+    if normalized_response_format == "diarized_json":
+        if not adapter.supports_speaker_diarization:
+            raise HTTPException(
+                status_code=400,
+                detail="response_format 'diarized_json' requires speaker diarization support",
+            )
+        else:
+            pass
+        diarized_response = adapter.build_diarized_response(
+            text=text,
+            audio_duration_s=duration_s,
+        )
+        diarized_response.usage = usage
+        return JSONResponse(content=diarized_response.model_dump(exclude_none=True))
+    else:
+        pass
     if normalized_response_format in {"verbose_json", *SEGMENT_RESPONSE_FORMATS}:
         if normalized_response_format in SEGMENT_RESPONSE_FORMATS:
             try:

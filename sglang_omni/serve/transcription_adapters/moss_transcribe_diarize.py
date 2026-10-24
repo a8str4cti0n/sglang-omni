@@ -1,10 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""verbose_json adapter for MOSS-Transcribe-Diarize.
-
-The model emits [start][S01] text [end] segments (speaker labels +
-timestamps). This adapter parses that markup into OpenAI verbose_json
-segments. The segment regex is ported from the upstream SGLang adapter.
-"""
+"""Timestamp and speaker response adapter for MOSS-Transcribe-Diarize."""
 
 from __future__ import annotations
 
@@ -12,6 +7,8 @@ import logging
 import re
 
 from sglang_omni.serve.protocol import (
+    TranscriptionDiarizedResponse,
+    TranscriptionDiarizedSegment,
     TranscriptionSegment,
     TranscriptionVerboseResponse,
 )
@@ -40,11 +37,40 @@ _SEGMENT_RE = re.compile(
 @register_transcription_adapter("MossTranscribeDiarize")
 class MossTranscribeDiarizeAdapter(TranscriptionAdapter):
     @property
+    def supports_speaker_diarization(self) -> bool:
+        return True
+
+    @property
     def supports_segment_timestamps(self) -> bool:
         return True
 
     def postprocess_text(self, text: str) -> str:
         return _SPECIAL_TOKEN_RE.sub("", text).strip()
+
+    def build_diarized_response(
+        self,
+        text: str,
+        audio_duration_s: float,
+    ) -> TranscriptionDiarizedResponse:
+        clean_text = self.postprocess_text(text)
+        segments = self.parse_segments(clean_text)
+        if not segments:
+            segments = self.build_fallback_segments(clean_text, audio_duration_s)
+        else:
+            pass
+        segments = self.sanitize_segments(segments, audio_duration_s)
+        for segment in segments:
+            segment.text = segment.text.strip()
+        duration_s = (
+            round(float(audio_duration_s), 2)
+            if audio_duration_s > 0
+            else max((segment.end for segment in segments), default=0.0)
+        )
+        return TranscriptionDiarizedResponse(
+            duration=duration_s,
+            text=" ".join(segment.text for segment in segments),
+            segments=segments,
+        )
 
     def build_verbose_response(
         self,
@@ -77,7 +103,7 @@ class MossTranscribeDiarizeAdapter(TranscriptionAdapter):
         text: str,
         language: str | None,
         audio_duration_s: float,
-        segments: list[TranscriptionSegment],
+        segments: list[TranscriptionDiarizedSegment],
     ) -> TranscriptionVerboseResponse:
         segments = self.sanitize_segments(segments, audio_duration_s)
         duration = (
@@ -89,30 +115,38 @@ class MossTranscribeDiarizeAdapter(TranscriptionAdapter):
             language=language,
             duration=round(duration, 2),
             text=text,
-            segments=segments,
+            segments=[
+                TranscriptionSegment(
+                    id=segment_id,
+                    start=segment.start,
+                    end=segment.end,
+                    text=f"[{segment.speaker}]{segment.text}",
+                )
+                for segment_id, segment in enumerate(segments)
+            ],
         )
 
     @staticmethod
-    def parse_segments(text: str) -> list[TranscriptionSegment]:
-        segments: list[TranscriptionSegment] = []
+    def parse_segments(text: str) -> list[TranscriptionDiarizedSegment]:
+        segments: list[TranscriptionDiarizedSegment] = []
         for segment_id, match in enumerate(_SEGMENT_RE.finditer(text)):
             speaker = match.group("speaker") or "S01"
             body = match.group("text").strip()
-            segment_text = f"[{speaker}]{body}" if body else f"[{speaker}]"
             segments.append(
-                TranscriptionSegment(
-                    id=segment_id,
+                TranscriptionDiarizedSegment(
+                    id=str(segment_id),
                     start=round(float(match.group("start")), 2),
                     end=round(float(match.group("end")), 2),
-                    text=segment_text,
+                    speaker=speaker,
+                    text=body,
                 )
             )
         return segments
 
     @staticmethod
     def sanitize_segments(
-        segments: list[TranscriptionSegment], audio_duration_s: float
-    ) -> list[TranscriptionSegment]:
+        segments: list[TranscriptionDiarizedSegment], audio_duration_s: float
+    ) -> list[TranscriptionDiarizedSegment]:
         if audio_duration_s <= 0:
             return segments
         else:
@@ -141,21 +175,24 @@ class MossTranscribeDiarizeAdapter(TranscriptionAdapter):
     @staticmethod
     def build_fallback_segments(
         text: str, audio_duration_s: float
-    ) -> list[TranscriptionSegment]:
+    ) -> list[TranscriptionDiarizedSegment]:
         text = text.strip()
         if not text:
             return []
         else:
             pass
-        if not re.match(r"^\[S\d{2,}\]", text):
-            text = f"[S01]{text}"
+        speaker_match = re.match(r"^\[(S\d{2,})\]", text)
+        if speaker_match is not None:
+            speaker = speaker_match.group(1)
+            text = text[speaker_match.end() :]
         else:
-            pass
+            speaker = "S01"
         return [
-            TranscriptionSegment(
-                id=0,
+            TranscriptionDiarizedSegment(
+                id="0",
                 start=0.0,
                 end=round(max(float(audio_duration_s), 0.0), 2),
                 text=text,
+                speaker=speaker,
             )
         ]

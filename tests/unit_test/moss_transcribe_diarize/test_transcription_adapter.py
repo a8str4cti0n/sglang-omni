@@ -99,6 +99,68 @@ def test_empty_text_yields_no_segments() -> None:
     assert resp.segments == []
 
 
+@pytest.mark.parametrize("speaker_tag, speaker", [("", "S01"), ("[S02]", "S02")])
+def test_diarized_response_separates_speaker_from_speech(
+    speaker_tag: str,
+    speaker: str,
+) -> None:
+    """Diarized JSON must expose speaker identity without embedding model markup in speech."""
+    response = moss_adapter().build_diarized_response(
+        f"<|im_start|>[13.44]{speaker_tag} xin chào[15.44]"
+        "[33.61][S03] chào bạn[35.61]<|im_end|>",
+        36.0,
+    )
+    assert response.model_dump(exclude_none=True) == {
+        "task": "transcribe",
+        "duration": 36.0,
+        "text": "xin chào chào bạn",
+        "segments": [
+            {
+                "type": "transcript.text.segment",
+                "id": "0",
+                "start": 13.44,
+                "end": 15.44,
+                "speaker": speaker,
+                "text": "xin chào",
+            },
+            {
+                "type": "transcript.text.segment",
+                "id": "1",
+                "start": 33.61,
+                "end": 35.61,
+                "speaker": "S03",
+                "text": "chào bạn",
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "text, expected_speaker", [("hello", "S01"), ("[S02]hello", "S02")]
+)
+def test_diarized_response_without_timestamps(text: str, expected_speaker: str) -> None:
+    """Whole-audio fallback must keep a separate speaker label."""
+    response = moss_adapter().build_diarized_response(text, 4.5)
+    assert response.text == "hello"
+    assert [
+        (segment.start, segment.end, segment.speaker, segment.text)
+        for segment in response.segments
+    ] == [(0.0, 4.5, expected_speaker, "hello")]
+
+
+def test_diarized_response_empty_transcript() -> None:
+    """Silence must not create a fabricated speaker segment."""
+    response = moss_adapter().build_diarized_response("<|im_end|>", 2.0)
+    assert response.text == ""
+    assert response.segments == []
+
+
+def test_diarized_response_sanitizes_timestamps() -> None:
+    """Diarized timestamps must receive the same bounds repair as verbose JSON."""
+    response = moss_adapter().build_diarized_response("[0][S02]hello[999]", 4.5)
+    assert response.segments[0].end == 4.5 + _TIMESTAMP_TOLERANCE_S
+
+
 def test_default_adapter_single_segment() -> None:
     adapter = DefaultTranscriptionAdapter()
     resp = adapter.build_verbose_response(

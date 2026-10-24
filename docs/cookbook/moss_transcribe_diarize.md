@@ -205,7 +205,7 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
 | `file` | file | required | Audio file uploaded as multipart form data |
 | `model` | string | server default | Model identifier |
 | `language` | string | unset | Optional language hint |
-| `response_format` | string | `json` | `json`, `verbose_json`, or `text` |
+| `response_format` | string | `json` | `json`, `verbose_json`, `diarized_json`, or `text` |
 | `temperature` | float | model default (`0.0`) | Sampling temperature |
 | `max_new_tokens` | int | duration scaled | Max generated tokens. With the stock config, omitted requests use `max(512, 10 * audio seconds)`; empty audio uses a 128-token fallback. A fixed stage value disables duration scaling. Explicit values always win and are clamped to the remaining model context |
 | `prompt` | string | unset | Optional instruction override; omit to use the built-in transcribe+diarize prompt |
@@ -214,6 +214,26 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
 `start`, `end`, and speaker-prefixed `text` (for example `[S01]...`).
 Timestamped segments without a speaker tag are also parsed; their segment text uses `[S01]` as a fallback speaker prefix. The full transcript string is preserved.
 `json` / `text` return the full transcript string without segment parsing.
+
+Use `response_format=diarized_json` for separate speaker labels and clean speech text. Each segment contains a string `id`, `type="transcript.text.segment"`, `start`, `end`, `speaker`, and `text`. The top-level `text` joins the segment speech with spaces, without timestamp or speaker markup. Existing `verbose_json` responses retain speaker-prefixed segment text and the full model transcript.
+
+Speaker labels preserve the model's identifiers, such as `S01` and `S02`, rather than remapping them to OpenAI's anonymous labels `A` and `B`. A missing speaker tag defaults to `S01`; this is a parser convention, not a verified speaker identity. If the model returns text without parseable timestamps, the response contains one segment spanning the audio duration, as with `verbose_json`.
+
+For example, `[13.44]xin chào[15.44][33.61][S02]chào bạn[35.61]` produces:
+
+```json
+{
+  "task": "transcribe",
+  "duration": 36.0,
+  "text": "xin chào chào bạn",
+  "segments": [
+    {"type": "transcript.text.segment", "id": "0", "start": 13.44, "end": 15.44, "speaker": "S01", "text": "xin chào"},
+    {"type": "transcript.text.segment", "id": "1", "start": 33.61, "end": 35.61, "speaker": "S02", "text": "chào bạn"}
+  ]
+}
+```
+
+`diarized_json` supports non-streaming requests to `/v1/audio/transcriptions` with this model. Streaming requests and uploads requiring server-side chunking return HTTP 400. Speaker identities are not reconciled across independently decoded chunks. Other models and `/v1/audio/translations` do not accept this format.
 
 ## Benchmarking
 

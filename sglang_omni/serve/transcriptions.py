@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 TRANSCRIPTIONS_ENDPOINT = "/v1/audio/transcriptions"
 TRANSCRIPTION_RESPONSE_FORMATS = (
-    speech_to_text.DEFAULT_RESPONSE_FORMATS | speech_to_text.SEGMENT_RESPONSE_FORMATS
+    speech_to_text.DEFAULT_RESPONSE_FORMATS
+    | speech_to_text.SEGMENT_RESPONSE_FORMATS
+    | {"diarized_json"}
 )
 
 _first_transcription_chunk = speech_to_text.first_speech_to_text_chunk
@@ -106,6 +108,24 @@ def register_transcriptions(app: FastAPI) -> None:
         request_id = f"transcription-{uuid.uuid4()}"
 
         response_format = form.response_format.strip().lower()
+        speech_to_text.validate_speech_to_text_response_format(
+            form.response_format,
+            stream=form.stream,
+            endpoint_path=TRANSCRIPTIONS_ENDPOINT,
+            response_formats=TRANSCRIPTION_RESPONSE_FORMATS,
+        )
+        if (
+            response_format == "diarized_json"
+            and not speech_to_text.resolve_speech_to_text_adapter(
+                getattr(app.state, "architectures", None)
+            ).supports_speaker_diarization
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="response_format 'diarized_json' requires speaker diarization support",
+            )
+        else:
+            pass
         segment_timestamps = response_format in speech_to_text.SEGMENT_RESPONSE_FORMATS
         if (
             segment_timestamps
@@ -132,12 +152,6 @@ def register_transcriptions(app: FastAPI) -> None:
         chunking: ResolvedAudioChunking = app.state.audio_chunking
 
         if form.stream:
-            speech_to_text.validate_speech_to_text_response_format(
-                form.response_format,
-                stream=True,
-                endpoint_path=TRANSCRIPTIONS_ENDPOINT,
-                response_formats=TRANSCRIPTION_RESPONSE_FORMATS,
-            )
             duration_s = await asyncio.to_thread(_probe_audio_duration, audio_bytes)
             if (
                 chunking.allow_audio_chunking
@@ -262,6 +276,17 @@ async def transcribe_planned_upload(
     client: Client = app.state.client
     default_model: str = app.state.model_name
     chunking: ResolvedAudioChunking = app.state.audio_chunking
+
+    if plan is not None and form.response_format.strip().lower() == "diarized_json":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "response_format 'diarized_json' does not support chunked transcription "
+                "because speaker identities are not reconciled across chunks"
+            ),
+        )
+    else:
+        pass
 
     if (
         plan is not None

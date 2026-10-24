@@ -638,6 +638,27 @@ class TranscriptionVerboseResponse(BaseModel):
     usage: TranscriptionUsage | None = None
 
 
+class TranscriptionDiarizedSegment(BaseModel):
+    """Transcript speech with timestamps and a separate speaker label."""
+
+    type: Literal["transcript.text.segment"] = "transcript.text.segment"
+    id: str
+    start: float
+    end: float
+    speaker: str
+    text: str
+
+
+class TranscriptionDiarizedResponse(BaseModel):
+    """OpenAI-compatible diarized transcription response."""
+
+    task: Literal["transcribe"] = "transcribe"
+    duration: float
+    text: str
+    segments: list[TranscriptionDiarizedSegment] = Field(default_factory=list)
+    usage: TranscriptionUsage | None = None
+
+
 class TranscriptionTextDeltaEvent(BaseModel):
     """OpenAI-compatible streaming transcription delta event (SSE)."""
 

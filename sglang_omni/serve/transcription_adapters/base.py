@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from sglang_omni.serve.protocol import (
+    TranscriptionDiarizedResponse,
     TranscriptionSegment,
     TranscriptionVerboseResponse,
 )
@@ -29,6 +30,18 @@ class TranscriptionAdapter(ABC):
     def supports_segment_timestamps(self) -> bool:
         """Whether segments carry model-derived timestamps."""
         return False
+
+    @property
+    def supports_speaker_diarization(self) -> bool:
+        return False
+
+    def build_diarized_response(
+        self,
+        text: str,
+        audio_duration_s: float,
+    ) -> TranscriptionDiarizedResponse:
+        """Build a response with separate speaker labels and speech text."""
+        raise ValueError("model does not support speaker diarization")
 
     @property
     def requires_ordered_chunk_decoding(self) -> bool:

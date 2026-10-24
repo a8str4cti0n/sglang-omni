@@ -192,16 +192,18 @@ def test_omitted_language_detects_the_source() -> None:
     assert backend.requests[-1].extra_params["language"] == "zh"
 
 
-def test_invalid_response_format_returns_openai_400() -> None:
+@pytest.mark.parametrize("response_format", ["xml", "diarized_json"])
+def test_invalid_response_format_returns_openai_400(response_format: str) -> None:
+    """Transcription-only formats must not become translation formats."""
     client, backend = translation_client()
 
-    response = post_translation(client, response_format="xml")
+    response = post_translation(client, response_format=response_format)
 
     assert response.status_code == 400
     error = response.json()["error"]
     assert error["type"] == "invalid_request_error"
     assert error["param"] == "response_format"
-    assert "'xml'" in error["message"]
+    assert repr(response_format) in error["message"]
     assert backend.requests == []
 
 
