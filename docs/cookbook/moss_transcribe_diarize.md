@@ -212,6 +212,7 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
 
 `verbose_json` parses the model markup into OpenAI-style `segments` with
 `start`, `end`, and speaker-prefixed `text` (for example `[S01]...`).
+Timestamped segments without a speaker tag are also parsed; their segment text uses `[S01]` as a fallback speaker prefix. The full transcript string is preserved.
 `json` / `text` return the full transcript string without segment parsing.
 
 ## Benchmarking

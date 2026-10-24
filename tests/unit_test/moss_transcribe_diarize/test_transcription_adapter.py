@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sglang_omni.serve.transcription_adapters import resolve_adapter
 from sglang_omni.serve.transcription_adapters.base import DefaultTranscriptionAdapter
 from sglang_omni.serve.transcription_adapters.moss_transcribe_diarize import (
@@ -58,6 +60,35 @@ def test_fallback_when_no_markup() -> None:
     assert seg.end == 4.5
     assert seg.text == "[S01]plain transcript no markers"
     assert resp.duration == 4.5
+
+
+@pytest.mark.parametrize(
+    "speakers", [("", "", ""), ("[S02]", "", "[S03]"), ("", "[S02]", "")]
+)
+def test_timestamped_segments_without_speaker_tags(
+    speakers: tuple[str, str, str],
+) -> None:
+    """Missing speaker tags must not merge segments or leave timestamps in speech."""
+    text = (
+        f"[13.44]{speakers[0]}xin chào[15.44]"
+        f"[33.61]{speakers[1]}văn bản này không có thẻ người nói[35.61]"
+        f"[38.90]{speakers[2]}nó không được phân tích chính xác[40.90]"
+    )
+    response = moss_adapter().build_verbose_response(text, None, 41.22)
+    assert response.text == text
+    assert [
+        (segment.id, segment.start, segment.end, segment.text)
+        for segment in response.segments
+    ] == [
+        (0, 13.44, 15.44, f"{speakers[0] or '[S01]'}xin chào"),
+        (
+            1,
+            33.61,
+            35.61,
+            f"{speakers[1] or '[S01]'}văn bản này không có thẻ người nói",
+        ),
+        (2, 38.90, 40.90, f"{speakers[2] or '[S01]'}nó không được phân tích chính xác"),
+    ]
 
 
 def test_empty_text_yields_no_segments() -> None:

@@ -29,10 +29,10 @@ _TIMESTAMP_TOLERANCE_S = 5.0
 
 _SPECIAL_TOKEN_RE = re.compile(r"<\|(?:im_start|im_end|endoftext)\|>")
 _SEGMENT_RE = re.compile(
-    r"\[(?P<start>\d+(?:\.\d+)?)\]\s*\[(?P<speaker>S\d{2,})\]"
+    r"\[(?P<start>\d+(?:\.\d+)?)\]\s*(?:\[(?P<speaker>S\d{2,})\])?"
     r"(?P<text>.*?)"
     r"\s*\[(?P<end>\d+(?:\.\d+)?)\]"
-    r"(?=\s*(?:\[\d+(?:\.\d+)?\]\s*\[S\d{2,}\]|$))",
+    r"(?=\s*(?:\[\d+(?:\.\d+)?\]|$))",
     re.DOTALL,
 )
 
@@ -96,7 +96,7 @@ class MossTranscribeDiarizeAdapter(TranscriptionAdapter):
     def parse_segments(text: str) -> list[TranscriptionSegment]:
         segments: list[TranscriptionSegment] = []
         for segment_id, match in enumerate(_SEGMENT_RE.finditer(text)):
-            speaker = match.group("speaker")
+            speaker = match.group("speaker") or "S01"
             body = match.group("text").strip()
             segment_text = f"[{speaker}]{body}" if body else f"[{speaker}]"
             segments.append(
